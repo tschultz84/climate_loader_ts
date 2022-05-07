@@ -81,8 +81,8 @@ class LoadStation :
                 self.run_this_baby(self.closest_stations.iloc[i,0])
                 #A check is performed tos ee if the data is compelte.
                 isgood = self.StationDataCheck(self.station_data)
-                if isgood == True:
-                    #Set flag to stop the loop, if the data is good.
+                if isgood == True: #Set flag to stop the loop, if the data is good.
+                    
                     keep_going=False
                     #SEtting variables to be extracted. 
                     self.name_closest_station=self.closest_stations.iloc[i][1] 
