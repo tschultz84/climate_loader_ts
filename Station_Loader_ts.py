@@ -48,15 +48,18 @@ class LoadStation :
     def __init__(self,point,printudpate=False,min_days_per_mo=15,search_radius=1,firstyear=1890,lastyear=2020,basenoyears=30,
             min_recent_years=5,required_trend_years =20,lastbaseyear=1955):
         
-        #Initiate all the variables which are used later on.
-        self.min_days=min_days_per_mo
-        self.search_radius=search_radius
-        self.firstyear=firstyear
-        self.lastyear=lastyear
-        self.basenoyears=basenoyears
-        self.min_recent_years=min_recent_years
-        self.required_trend_years=required_trend_years
-        self.lastbaseyear=lastbaseyear
+        #Initiate all the variables which are used later on, and load them into a Series for easy review.
+        self.station_filters=pd.Series(data={
+            "Reference Point Latitude":point[0],
+            "Reference Point Longitude":point[1],
+            "Earliest Year Required in Dataset":firstyear,
+            "Latest Year Required in Dataset":lastyear,
+            "Min Days in Every Month":min_days_per_mo,
+            "Search Radius (deg)":search_radius,
+            "Min Number of Years before Present Year":min_recent_years,
+            "Min Years for Trend":required_trend_years,
+            "Last Year of Baseline":lastbaseyear,
+            "Required Number of years in Baseline Period":basenoyears    })
         
         self.display=  printudpate   
         #If a point (lat, lon) is passed, then create a point. 
@@ -65,7 +68,6 @@ class LoadStation :
         
         #Files to load.
         self.GHCND_STATIONS_FILENAME = "data\\ghcnd-stations.txt" #The NOAA file containing station meta info (lat, lon, elevation.)
-        #self.GHCND_INVENTORY_FILENAME = "data\\ghcnd-inventory.txt" #NOAA file containing the climate variables each station records
         self.STATION_MASTER_ALL_FILENAME = "data\\ghcnd_station_master_ts_all.csv" #contains all stations and all data about each.
         self.STATION_META_FILENAME = "data\\ghcnd_station_master_ts_tmax.csv" #containing all the lat / lon information for the stations.
         self.NOAA_URL = 'https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/' #url to the directory containing the DLY files. 
@@ -73,55 +75,46 @@ class LoadStation :
         #First, the list of stations is generated.
         self.closest_stations = self.nearest_station(point)
       
-        #Now, the station data is all loaded up.
-        # add a flag variable
-        keep_going = True
-        for i in np.arange(1,len(self.closest_stations)):
+        #Now, the station data is all loaded up and then all stations are run through to find one which is complete.
+        keep_going = True# add a flag variable
+        for index,station in self.closest_stations.iloc[1:].iterrows():
             if keep_going == True:
-                self.run_this_baby(self.closest_stations.iloc[i,0])
+                self.run_this_baby(station['ID']) #Run the download.
+            
                 #A check is performed tos ee if the data is compelte.
                 isgood = self.StationDataCheck(self.station_data)
                 if isgood == True: #Set flag to stop the loop, if the data is good.
-                    
                     keep_going=False
                     #SEtting variables to be extracted. 
-                    self.name_closest_station=self.closest_stations.iloc[i][1] 
-                    self.id_closest_station=self.closest_stations.iloc[i][0] 
+                    self.name_closest_station=station['Name']
+                    self.id_closest_station=station['ID']
                     #Lat Longitude.
-                    self.st_latlon_str = str(round(self.closest_stations.iloc[i][2],2))+" latitude, "+str(round(self.closest_stations.iloc[i][3],2))+" longitude"
+                    self.st_latlon_str = f"{round(station['Latitude'],2)} latitude {round(station['Longitude'],2)} longitude"
                     #Latitude, Longitude of the weather station.
-                    self.st_latlon = [self.closest_stations.iloc[i][2],self.closest_stations.iloc[i][3]]
+                    self.st_latlon=[station['Latitude'],station['Longitude']]
                     #Miles from reference point.
-                    self.miles_from_ref = self.closest_stations.iloc[i][4]
-                    if self.display: 
+                    self.miles_from_ref = station['Miles_from_Ref']
+                    if self.display:  
                         
-                        print("Station ID# "+str(self.closest_stations.iloc[i,0])+", "+str(self.name_closest_station)+" is complete. It's good to use.")
+                        print(f"Station ID# {station['ID']}, called {station['Name']} is complete. It's good to use.")
                         print("This station is "+str(self.miles_from_ref)+" miles from the reference point.")
                         
-                
                 #If it's not, we report that. ANd keep the flag TRue to keep goign. 
                 if isgood == False:
                     keep_going=True
                     if self.display: 
-                        print("Station ID# "+str(self.closest_stations.iloc[i,0])+", called "+str(self.closest_stations.iloc[i][1] )+" is incomplete. Don't use it.")
-                if i == (len(self.closest_stations)-1):
-                    print(f"I checked { i } weather stations within {self.search_radius} degrees of {point} in all directions.")
-                    print("None have data which is adequate for my use.")
-                    print("Please enter a different point, or change the years you must include in the load.")
-                    #Set variables to return, which all are not numbers, since no reference station was found.
-                    self.id_closest_station = np.nan
-                    self.name_closest_station = np.nan
-                    self.miles_from_ref = np.nan
-                    self.st_latlon = np.nan
+                        print(f"Station ID# {station['ID']}, called {station['Name']} is incomplete. Do not use it.")
+        if isgood==False: #If the loop is over, and no stations are found, throw an error.
+            print(f"I checked { len(self.closest_stations) } weather stations within {self.station_filters['Search Radius (deg)']} degrees of {point} in all directions.")
+            print("None have data which is adequate for my use.")
+            print("Please enter a different point, or change the years you must include in the load.")
+            #Set variables to return, which all are not numbers, since no reference station was found.
+            self.id_closest_station = np.nan
+            self.name_closest_station = np.nan
+            self.miles_from_ref = np.nan
+            self.st_latlon = np.nan
                     
-                    #This creates the frist row of the return dataframe.
-                    self.closest_stations= pd.DataFrame(
-                        {'ID':['REFPT'],
-                         'Name':["Reference Location"],
-                         'Latitude':np.nan,
-                         'Longitude':np.nan,
-                         'Miles_from_Ref':np.nan}
-                        )
+                    
                   
     #This funtion runs all functions.
     def run_this_baby(self,point):
@@ -156,7 +149,9 @@ class LoadStation :
                
        #This steps strips out lat and lon values that are not nearby, reducing the number
        #of distance computations required.
-       bar = self.search_radius
+       #bar = self.search_radius
+       bar = self.station_filters['Search Radius (deg)']
+       
        df=df1[df1['Longitude']>point[1]-bar]
        df=df[df['Longitude']<point[1]+bar]
        df=df[df['Latitude']>point[0]-bar]
@@ -165,10 +160,10 @@ class LoadStation :
        #These lines strip out stations where there is no recent data (from within the last year), 
 
        #recentyear=date.today().year-1
-       recentyear=self.lastyear
+       recentyear=self.station_filters['Latest Year Required in Dataset']
        df = df[df['Lastyear']>=recentyear] 
        #and then strips out stations for which data is only very very recent. 
-       baseyear=self.firstyear
+       baseyear=self.station_filters["Earliest Year Required in Dataset"]
        df = df[df['Firstyear']<=baseyear]
        if len(df) == 0:
            print(f"There are no stations within {bar} degrees of {point} in any direction that have data as far back as the year {baseyear}.")
@@ -196,8 +191,8 @@ class LoadStation :
         #Prints the number of stations being searched.
        if self.display: 
            print("Searching closest station among "
-                              +str(len(df))+" stations within "+str(self.search_radius)+" degrees of the reference.")
-           print("which have more recent data than "+str(recentyear)+" and at least as early as "+str(self.firstyear))
+                              +str(len(df))+" stations within "+str(self.station_filters["Search Radius (deg)"])+" degrees of the reference.")
+           print("which have more recent data than "+str(recentyear)+" and at least as early as "+str(self.station_filters["Earliest Year Required in Dataset"]))
        
        #This creates a dataseries which calculates the distance from the ref "pt"
        #to all of the nearest stations.
@@ -334,14 +329,6 @@ class LoadStation :
         #THESE STEPS SCRUB OUT ALL YEARS WHERE THERE IS INSUFFICIENT DATA.
         #First, list out the unique years.
         uniqueyears = np.unique(returner1[:,0])
-        
-        
-        #This defines the minimum number of days of data which msut be present in eveyr month
-        #for the year to be included.
-        if self.min_days == -1:
-            min_days=self.min_days_per_mo
-        if self.min_days > -1:    
-            min_days=self.min_days
             
         showme = self.display
 
@@ -383,14 +370,15 @@ class LoadStation :
                     tmid_number = np.count_nonzero(listoftmax)
                     #Then checks if each is over the require dminium.
                     #Every data point must be present at the right threshold.
-                    tmax_enough = (tmax_number >= min_days)
-                    tmin_enough = (tmax_number >= min_days)
-                    tmid_enough = (tmax_number >= min_days)
+                    tmax_enough = (tmax_number >= self.station_filters['Min Days in Every Month'])
+                    tmin_enough = (tmin_number >= self.station_filters['Min Days in Every Month'])
+                    tmid_enough = (tmid_number >= self.station_filters['Min Days in Every Month'])
+                    
                     #If any condition is false -- there are not enough TMID, TMAX, or TMIN
                     #values in the month - then the whole year is dropped out.
                     if (tmax_enough == False) or (tmin_enough==False) or (tmid_enough ==False):
                         return_this_year = False
-                        if showme: print("I dropped "+str(year)+" for having less than "+str(min_days)+" days in month #"+str(month))
+                        if showme: print(f"I dropped {year} for having less than {self.station_filters['Min Days in Every Month']}s days in month # {month}.")
             #Only if return_this_year, the flag field, is True, is the year added.
             #there is only one exception: the most recent year, which definitionally
             #will not have a complete reord of data, which is OK.
@@ -428,44 +416,46 @@ class LoadStation :
         thisyear = date.today().year
 
         #If MIN_RECENT_YEARS = 0, then the check is skipped entirely.
-        if self.min_recent_years >0:
+        if self.station_filters['Min Number of Years before Present Year'] >0:
             #This is the value that should be recent in this part of the array, if all years are present. 
-            threshyear=thisyear-self.min_recent_years
+            threshyear=thisyear-self.station_filters['Min Number of Years before Present Year']
             
             #But this finds out if the threshyear is actually the right value in the array
-            arbiter = (listyears[-self.min_recent_years-1] - threshyear >= 0)
+            #This was throwing errors I think because the number of yeras was incorrect, need to return to this line.
+            #arbiter = (listyears[-self.station_filters['Min Number of Years before Present Year']-1] - threshyear >= 0)
             
             #Check the latest few years are present.
             #If not, then itsgood is false and the year is bad. 
-            if arbiter == False:
-                itsgood = False
-                print("Flag: I need every year of ("+str(threshyear)+" to "+str(thisyear)+") - but they are not all not present.")
+            #if arbiter == False:
+            #    itsgood = False
+            #    print("Flag: I need every year of ("+str(threshyear)+" to "+str(thisyear)+") - but they are not all not present.")
 
         
         #Then, check if there are sufficient years in the recent trend.
         #This is just the number of trend years plus 5.
-        min_trend_years = self.required_trend_years
+        min_trend_years = self.station_filters['Min Years for Trend']
         no_recent = np.shape(np.where(listyears>=thisyear-min_trend_years))[1]
-        if no_recent <= self.required_trend_years:
+        if no_recent <= self.station_filters['Min Years for Trend']:
             itsgood = False
             if self.display: 
                 print("Flag: Insufficent years to calculate recent trend.") 
-                print("I need more than "+str(self.required_trend_years)+" years to calculate a trend, but only "+str(no_recent)+" available.")
+                print("I need more than "+str(self.station_filters['Min Years for Trend'])+" years to calculate a trend, but only "+str(no_recent)+" available.")
         #Then, that there are enough years to calculate a baseline.
         #First, limit it to the years in the baseline range. 
-        early_index = np.where(listyears<=self.lastbaseyear)
-        early_index = np.where(listyears[early_index]>=self.firstyear)
+        early_index = np.where(listyears<=self.station_filters['Last Year of Baseline'])
+        early_index = np.where(listyears[early_index]>=self.station_filters["Earliest Year Required in Dataset"])
         #Then, count the years.
         no_early = np.shape(early_index)[1]
         
-        if no_early <= self.basenoyears:
+        if no_early <= self.station_filters['Required Number of years in Baseline Period']:
             itsgood = False
             if self.display: 
-                print("Flag: Insufficent years before "+str(self.lastbaseyear)+" to calculate mean for baseline period.")
-                print(f"There are {no_early} years in the period {self.firstyear} to {self.lastbaseyear}, but I need {self.basenoyears} to set an accurate baseline.")
-                #print ("There are "+str(no_early)+" years in this period, I need at least "+str(self.basenoyears)+" to set an accurate baseline.")
+                print("Flag: Insufficent years before "+str(self.station_filters['Last Year of Baseline'])+" to calculate mean for baseline period.")
+                print(f"There are {no_early} years in the period {self.station_filters['Earliest Year Required in Dataset']} to {self.station_filters['Last Year of Baseline']}, but I need {self.station_filters['Required Number of years in Baseline Period']} to set an accurate baseline.")
+                
         return itsgood
               
 
-bzdata=LoadStation([45.647256643331126,-111.04060494981753],True,15) #Loading in Bozeman, MT coordinates
+bzdata=LoadStation([45.647256643331126,-111.04060494981753],True,15,1,1920,2020) #Loading in Bozeman, MT coordinates
+print(bzdata.station_filters)
 
