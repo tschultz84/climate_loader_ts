@@ -114,15 +114,15 @@ class LoadStation :
                         })
                     self.st_latlon_str = f"{round(station['Latitude'],2)} latitude {round(station['Longitude'],2)} longitude" #Lat Longitude string, used in an output table.
                                                          
-                    if self.display:  
-                        print(f"Station ID# {station['ID']}, called {station['Name']} is complete. It's good to use.")
-                        print(f"This station is {self.station_information['Miles from Reference Point']} miles from the reference point.")
+                    
+                    print(f"Station ID# {station['ID']}, called {station['Name']} is complete. It's good to use.")
+                    print(f"This station is {self.station_information['Miles from Reference Point']} miles from the reference point.")
                         
                 #If the check is False, keep the loop going. 
                 if isgood == False:
                     keep_going=True #Keep going, since this station's data was incomplete. 
-                    if self.display: 
-                        print(f"Station ID# {station['ID']}, called {station['Name']} is incomplete. Do not use it.")
+                    
+                    print(f"Station ID# {station['ID']}, called {station['Name']} is incomplete. Do not use it.")
         if isgood==False: #If the loop is over, and no stations are found, throw an error.
             print(f"I checked { len(self.closest_stations) } weather stations within {self.station_filters['Search Radius (deg)']} degrees of {point} in all directions.")
             print("None have data which is adequate for my use.")
@@ -191,9 +191,9 @@ class LoadStation :
        df=df[['ID','Name','Latitude','Longitude']]
 
         #Prints the number of stations being searched.
-       if self.display: 
-           print(f"Searching closest station among {len(df)} stations within {self.station_filters['Search Radius (deg)']} degrees of the reference.")
-           print(f"Which have data for {recentyear} and at least as early as {self.station_filters['Earliest Year Required in Dataset']}.")
+       
+       print(f"Searching closest station among {len(df)} stations within {self.station_filters['Search Radius (deg)']} degrees of the reference.")
+       print(f"Which have data for {recentyear} and at least as early as {self.station_filters['Earliest Year Required in Dataset']}.")
        
        #This creates a list, where every element is the distance from the Reference Point
        #to each of the weather stations which were found within search radius of Reference Point.
@@ -380,7 +380,7 @@ class LoadStation :
         #Ensure the years are sorted, because they do not work otherwise. 
         recent_years_in_data=pd.Series(listyears[-rec_years-1:-1]).astype(int) #List the recent years in the dataset.
         recentyearslist=pd.Series(np.arange(thisyear-rec_years,thisyear)).astype(int) #The list of recent years that should be present. 
-        if recent_years_in_data.equals(recentyearslist) == False: 
+        if len(recent_years_in_data) != len(recentyearslist): 
             itsgood = False 
             print(f"Flag: You specified that I need {rec_years} years of data before {thisyear}, but there are only {len(recent_years_in_data)} years.")
         
@@ -389,9 +389,9 @@ class LoadStation :
         no_recent = np.shape(np.where(listyears>=thisyear-min_trend_years))[1] #Count the number of recent years. 
         if no_recent <= self.station_filters['Min Years in Last 30 Years for Trend']:
             itsgood = False
-            if self.display: 
-                print("Flag: Insufficent years to calculate recent trend.") 
-                print(f"You specified that {self.station_filters['Min Years in Last 30 Years for Trend']} years of data in the last 30 be present to calculate a trend, but only {no_recent} are present.")
+            
+            print("Flag: Insufficent years to calculate recent trend.") 
+            print(f"You specified that {self.station_filters['Min Years in Last 30 Years for Trend']} years of data in the last 30 be present to calculate a trend, but only {no_recent} are present.")
         #Then, that there are enough years to calculate a baseline.
         #First, limit it to the years in the baseline range. 
         early_index = np.where(listyears<=self.station_filters['Last Year of Baseline'])
@@ -401,9 +401,9 @@ class LoadStation :
         
         if no_early <= self.station_filters['Required Number of years in Baseline Period']:
             itsgood = False
-            if self.display: 
-                print(f"Flag: Insufficent years before {self.station_filters['Last Year of Baseline']} to calculate mean for baseline period.")
-                print(f"There are {no_early} years in the period {self.station_filters['Earliest Year Required in Dataset']} to {self.station_filters['Last Year of Baseline']}, but I need {self.station_filters['Required Number of years in Baseline Period']} to set an accurate baseline.")
+            
+            print(f"Flag: Insufficent years before {self.station_filters['Last Year of Baseline']} to calculate mean for baseline period.")
+            print(f"There are {no_early} years in the period {self.station_filters['Earliest Year Required in Dataset']} to {self.station_filters['Last Year of Baseline']}, but I need {self.station_filters['Required Number of years in Baseline Period']} to set an accurate baseline.")
                 
         return itsgood
               
