@@ -9,6 +9,9 @@ import sys
 import numpy as np
 from datetime import date
 import requests
+import warnings
+warnings.filterwarnings("ignore")
+
 
 """
 This object has functions to identify the station nearest to a reference lat, lon.
@@ -17,11 +20,10 @@ It then runs several checks on this data to see if it is acceptably complete, wh
 It also calculates the TMID values, which is the average of TMAX and TMIN in every day.
 
 #The outputs of interest are as follows:
-    #self.refpoint is the reference
-    #self.id_closest_station gives the ID of the nearest station
-    #self.name_closest_statioon gives its name
-    #self.miles_from_ref gives its distance from teh reference point
-    #self.closest_stations gives a list of the  nearest stations
+    self.refpoint is the reference
+    self.station_information gives meta information, like the station name, ID, lat/lon, etc.
+    self.station_filters summarizes all the filters you entered as inputs. 
+    self.closest_stations gives a list of the  nearest stations
     self.station_data is a dataframe ahving loaded all the statin's data, a numpy array 
      with these columns: [Year, Month, Day, Day of Year, TMAX, TMIN, TMID]
 
@@ -34,100 +36,97 @@ It also calculates the TMID values, which is the average of TMAX and TMIN in eve
         a dataset to be included. If not, then the year is excluded from dataset.
     *search_radius is the lat/lon degrees around the reference piont that are searched. Defaults to 1, meaning 
         a searched is performed within 1 degree north, south, east, and west, of point.
-    *firstyear,lastyear are the first and last years which must be present in the dataset record for the weather station
-        to be loaded. 
+    *firstyear is the earliest year which must be present in the dataset record for the weather station
+        to be loaded. (Note: The station must have data for the 2nd most recent year, i.e., in 2022, for 2021.)
     *basenoyears is the number of years in the baseline period.
     *min_recent_years is the minimum number of years before he present which must be present
         for the statin to be loaded.
-    *required_trend_years minimum number of years required to calculate this trend.
-        Weather stations without this many years present will be discarded.
+    *required_trend_years minimum number of years in the last 30 required to calculate this trend.
+        Weather stations without this many years present in the last 30 years of data will be discarded.
     *lastbaseyear is the last year in which the baseline is calculated (not the same as last year)
     
 """    
 class LoadStation :
-    def __init__(self,point,printudpate=False,min_days_per_mo=15,search_radius=1,firstyear=1890,lastyear=2020,basenoyears=30,
+    def __init__(self,point,printudpate=False,min_days_per_mo=15,search_radius=1,firstyear=1890,basenoyears=30,
             min_recent_years=5,required_trend_years =20,lastbaseyear=1955):
-        
+        #Basic initializations - define your print variable and ensure the 'point' variable is in the right format. 
+        self.display=  printudpate   
+        #A couple of checks. 
+        #If a point (lat, lon) is passed, then create a point. 
+        if (type(point) != str) and (len(point)==2): self.refpoint=point
+        if required_trend_years >=30: required_trend_years = 30 #This by definition should not be more than 30. 
         #Initiate all the variables which are used later on, and load them into a Series for easy review.
         self.station_filters=pd.Series(data={
             "Reference Point Latitude":point[0],
             "Reference Point Longitude":point[1],
             "Earliest Year Required in Dataset":firstyear,
-            "Latest Year Required in Dataset":lastyear,
             "Min Days in Every Month":min_days_per_mo,
             "Search Radius (deg)":search_radius,
             "Min Number of Years before Present Year":min_recent_years,
-            "Min Years for Trend":required_trend_years,
+            "Min Years in Last 30 Years for Trend":required_trend_years,
             "Last Year of Baseline":lastbaseyear,
             "Required Number of years in Baseline Period":basenoyears    })
         
-        self.display=  printudpate   
-        #If a point (lat, lon) is passed, then create a point. 
-        if (type(point) != str) and (len(point)==2):
-            self.refpoint=point
-        
+        #Initialize the station_information Series with nan values, which are replaced if you find a station. 
+        self.station_information = pd.Series(data={
+                'Weather Station Name':np.nan, #Note station Name.
+                'Station ID':np.nan, #Note station ID.
+                'Earliest year in station record':np.nan,
+                'Most recent year in record':np.nan,
+                'Number of years in record meeting quality requirements':np.nan,
+                'Station Latitude':np.nan, #Define station coordinates.
+                'Station Longitude':np.nan,
+                "Reference Point Latitude":point[0], #Add in the original reference point for reference.
+                "Reference Point Longitude":point[1],
+                'Miles from Reference Point':np.nan
+                })
+
         #Files to load.
-        self.GHCND_STATIONS_FILENAME = "data\\ghcnd-stations.txt" #The NOAA file containing station meta info (lat, lon, elevation.)
-        self.STATION_MASTER_ALL_FILENAME = "data\\ghcnd_station_master_ts_all.csv" #contains all stations and all data about each.
         self.STATION_META_FILENAME = "data\\ghcnd_station_master_ts_tmax.csv" #containing all the lat / lon information for the stations.
         self.NOAA_URL = 'https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/' #url to the directory containing the DLY files. 
 
-        #First, the list of stations is generated.
+        #First, the list of stations is generated. This function finds all the stations within search_radius nearest to the point, without applying any filters.
         self.closest_stations = self.nearest_station(point)
       
-        #Now, the station data is all loaded up and then all stations are run through to find one which is complete.
-        keep_going = True# add a flag variable
+        #Now, all of the stations are checked for conformance to the filters. 
+        #Add two flag variables. 
+        keep_going = True # add a flag variable to keep the loop running. 
+        isgood = False #Initialize this flag variable if a station is found to satisfy all filters.
         for index,station in self.closest_stations.iloc[1:].iterrows():
             if keep_going == True:
-                self.run_this_baby(station['ID']) #Run the download.
-            
-                #A check is performed tos ee if the data is compelte.
-                isgood = self.StationDataCheck(self.station_data)
-                if isgood == True: #Set flag to stop the loop, if the data is good.
-                    keep_going=False
-                    #SEtting variables to be extracted. 
-                    self.name_closest_station=station['Name']
-                    self.station_information = pd.Series(data={'Weather Station Name':station['Name']})
-                    self.id_closest_station=station['ID']
-                    self.station_information = self.station_information.append(pd.Series(data={'Station ID':station['ID']}))
-                    #Lat Longitude.
-                    self.st_latlon_str = f"{round(station['Latitude'],2)} latitude {round(station['Longitude'],2)} longitude"
-                    
-                    #Latitude, Longitude of the weather station.
-                    self.st_latlon=[station['Latitude'],station['Longitude']]
-                    self.station_information = self.station_information.append(pd.Series(data={'Station Latitude':station['Latitude']}))
-                    self.station_information = self.station_information.append(pd.Series(data={'Station Longitude':station['Longitude']}))
-                    
-                    #Miles from reference point.
-                    self.miles_from_ref = station['Miles_from_Ref']
-                    #Add in the original reference point for reference.
-                    self.station_information = self.station_information.append(
-                        pd.Series(data={
-                            "Reference Point Latitude":point[0],"Reference Point Longitude":point[1]}))
-
-                   
-                    self.station_information = self.station_information.append(pd.Series(data={'Miles from Reference Point':station['Miles_from_Ref']}))
+                self.run_this_baby(station['ID']) #Run the download from the NOAA URL. This defines self.station_data for this station.
+                isgood = self.StationDataCheck(self.station_data) #Now, run a check on the downloaded station data. 
+                #This flag stops the loop, and assigns all variables, if checks are complete.
+                if isgood == True: 
+                    keep_going=False #Kill the loop. 
+                    #Output all the station meta information as a pandas Series. 
+                    self.station_information = pd.Series(data={
+                        'Weather Station Name':station['Name'], #Note station Name.
+                        'Station ID':station['ID'], #Note station ID.
+                        'Earliest year in station record':np.unique(self.station_data[:,0])[0],
+                        'Most recent year in record':np.unique(self.station_data[:,0])[-1],
+                        'Number of years in record meeting quality requirements':np.unique(self.station_data[:,0]).shape[0],
+                        'Station Latitude':station['Latitude'], #Define station coordinates.
+                        'Station Longitude':station['Longitude'],
+                        "Reference Point Latitude":point[0], #Add in the original reference point for reference.
+                        "Reference Point Longitude":point[1],
+                        'Miles from Reference Point':station['Miles_from_Ref']
+                        })
+                    self.st_latlon_str = f"{round(station['Latitude'],2)} latitude {round(station['Longitude'],2)} longitude" #Lat Longitude string, used in an output table.
+                                                         
                     if self.display:  
-                        
                         print(f"Station ID# {station['ID']}, called {station['Name']} is complete. It's good to use.")
-                        print("This station is "+str(self.miles_from_ref)+" miles from the reference point.")
+                        print(f"This station is {self.station_information['Miles from Reference Point']} miles from the reference point.")
                         
-                #If it's not, we report that. ANd keep the flag TRue to keep goign. 
+                #If the check is False, keep the loop going. 
                 if isgood == False:
-                    keep_going=True
+                    keep_going=True #Keep going, since this station's data was incomplete. 
                     if self.display: 
                         print(f"Station ID# {station['ID']}, called {station['Name']} is incomplete. Do not use it.")
         if isgood==False: #If the loop is over, and no stations are found, throw an error.
             print(f"I checked { len(self.closest_stations) } weather stations within {self.station_filters['Search Radius (deg)']} degrees of {point} in all directions.")
             print("None have data which is adequate for my use.")
-            print("Please enter a different point, or change the years you must include in the load.")
-            #Set variables to return, which all are not numbers, since no reference station was found.
-            self.id_closest_station = np.nan
-            self.name_closest_station = np.nan
-            self.miles_from_ref = np.nan
-            self.st_latlon = np.nan
-                    
-                    
+            print("Please enter a different point, or change the years you must include in the load.")        
                   
     #This funtion runs all functions.
     def run_this_baby(self,point):
@@ -135,18 +134,17 @@ class LoadStation :
       
         self.station_data=self.load_station(point)
         if(self.display): 
-            print("Time to load this station data:" + str(time.time() - startTime))
+            print(f"Time to download this station data: {time.time() - startTime} seconds.")
             startTime = time.time() 
         
         self.station_data=self.StationDataCleaner(self.station_data)
                 
         if(self.display): 
-            print("Time to clean up this data:" + str(time.time() - startTime))
+            print(f"Time to clean up this data: {time.time() - startTime} seconds.")
             
     """    
     #This function as a default takes the LoadStation object's
     #reference point of interest and searches for the nearest point in our list of points,
-    #searching distance by miles distance
     #It returns a list of the nearest stations, ordered by distance.
     #This is returned in the foramt of a dataframe.
     #The first row of the returned dataframe is the reference point. 
@@ -157,23 +155,20 @@ class LoadStation :
        #This initializes the actual data to search, from the list of stations
        #It only reads in the columns which are necessary to search by distance. 
        #It also searches only for the TMAX values. 
-       df1 = pd.read_csv(self.STATION_META_FILENAME,
+       df_all = pd.read_csv(self.STATION_META_FILENAME,
                         dtype={'Firstyear': np.int64,'Lastyear': np.int64})[['ID','Name','Latitude','Longitude','Firstyear','Lastyear']]
                
        #This steps strips out lat and lon values that are not nearby, reducing the number
        #of distance computations required.
-       #bar = self.search_radius
        bar = self.station_filters['Search Radius (deg)']
-       
-       df=df1[df1['Longitude']>point[1]-bar]
-       df=df[df['Longitude']<point[1]+bar]
-       df=df[df['Latitude']>point[0]-bar]
-       df=df[df['Latitude']<point[0]+bar]
-       
+       #Create a mask - only these rows are kept (i.e., those within the search radius. )
+       mask = (df_all['Longitude']>point[1]-bar) & (df_all['Longitude']<point[1]+bar) & (df_all['Latitude']>point[0]-bar) & (df_all['Latitude']<point[0]+bar)
+       #Create the filtered dataframe. 
+       df = df_all[mask].copy(deep=True)
+
        #These lines strip out stations where there is no recent data (from within the last year), 
 
-       #recentyear=date.today().year-1
-       recentyear=self.station_filters['Latest Year Required in Dataset']
+       recentyear=date.today().year-1
        df = df[df['Lastyear']>=recentyear] 
        #and then strips out stations for which data is only very very recent. 
        baseyear=self.station_filters["Earliest Year Required in Dataset"]
@@ -181,12 +176,6 @@ class LoadStation :
        if len(df) == 0:
            print(f"There are no stations within {bar} degrees of {point} in any direction that have data as far back as the year {baseyear}.")
            print(f"Please enter a more realistic base year for later than {baseyear} or expand your search radius.")
-           #sys.exit("Base year is too early.")
-           #Set variables to return, which all are not numbers, since no reference station was found.
-           self.id_closest_station = np.nan
-           self.name_closest_station = np.nan
-           self.miles_from_ref = np.nan
-           self.st_latlon = np.nan
            
            #This creates the frist row of the return dataframe.
            refdf= pd.DataFrame(
@@ -203,15 +192,14 @@ class LoadStation :
 
         #Prints the number of stations being searched.
        if self.display: 
-           print("Searching closest station among "
-                              +str(len(df))+" stations within "+str(self.station_filters["Search Radius (deg)"])+" degrees of the reference.")
-           print("which have more recent data than "+str(recentyear)+" and at least as early as "+str(self.station_filters["Earliest Year Required in Dataset"]))
+           print(f"Searching closest station among {len(df)} stations within {self.station_filters['Search Radius (deg)']} degrees of the reference.")
+           print(f"Which have data for {recentyear} and at least as early as {self.station_filters['Earliest Year Required in Dataset']}.")
        
-       #This creates a dataseries which calculates the distance from the ref "pt"
-       #to all of the nearest stations.
-       d1er=[]
-       for i in range(0,len(df)):
-           d1er.append(self.ts_latlon_distance([point[0],point[1]],df.iloc[i][['Latitude','Longitude']]))
+       #This creates a list, where every element is the distance from the Reference Point
+       #to each of the weather stations which were found within search radius of Reference Point.
+       d1er=[] #Initialize this list. 
+       for index, station in df.iterrows():
+           d1er.append(self.ts_latlon_distance([point[0],point[1]],station[['Latitude','Longitude']]))
        
        #This appends the data series to the final return dataframe
        df['Miles_from_Ref']=d1er
@@ -219,15 +207,8 @@ class LoadStation :
        #and then sorts by miles from ref, to find the closest stations       
        returner=df.sort_values(by='Miles_from_Ref')
        
-       #Then return the closest 50 stations.
+       #Then strip out to include only the closest 50 stations.
        returner=returner[0:50]
-       
-       #This sets a variable which is the ID Of the nearest station
-       self.id_closest_station = returner.iloc[0,0]
-       #Then a separate variable that is the name. 
-       self.name_closest_station = returner.iloc[0,1]
-       #Then a separate variable that is the miles distance from the ref point. 
-       self.miles_from_ref = returner.iloc[0,4]
        
        #This creates the frist row of the return dataframe.
        refdf= pd.DataFrame(
@@ -240,8 +221,7 @@ class LoadStation :
        final = refdf.append(returner)   
        return final
     
-    #This function returns the miles between two poitns
-    #def ts_latlon_distance(lat1, lat2, lon1, lon2):
+    #This function returns the miles between two points which were given in decimal lat/lon. 
     def ts_latlon_distance(self,latlon1,latlon2):
         # radians which converts from degrees to radians.
         lon1 = radians(latlon1[1])
@@ -254,61 +234,44 @@ class LoadStation :
         a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2 
         c = 2 * asin(sqrt(a))
         
-        # Radius of earth in miles. Use 3956 for miles
-        r = 3956     
-        
+        r = 3956    # Radius of earth in miles. Use 3956 for miles 
         # calculate the result, returned in miles
         return(c * r)
          
     #This loads the station.
     #As default, station = None, and the id_closest_st for thsi object is run.
     #The station value must be a string. 
-    def load_station(self,station=None):
-
-        #If statino is none, then defaults to the station closest to the ref point. 
-        if station == None:
-            station=self.id_closest_station
-       
-        #Downloading the CSV file straight rom NOAA.
-        #First, assigning the URL Name.
+    def load_station(self,station):
+        #First, assigning the URL Name. This is standard and based on NOAA conventions. 
         csv_url = self.NOAA_URL+str(station)+'.csv'
-        
         if self.display == True: 
-            #This gets the filesize.
+            #This gets the filesize from NOAA.
             info=requests.head(csv_url)
             filesize = int(info.headers['Content-Length'])/1000000
-            print("Beginning to download "+csv_url+' ('+str(filesize)+"MB). Please wait while the file is transferred.")
-        #Then, checking i it exists. the script breaks if the file does not exist.
+            print(f"Beginning to download {csv_url} ({filesize} MB). Please wait while the file is transferred.")
+        #Then, checking if it exists. the script breaks if the file does not exist.
         response = requests.get(csv_url)
         if response.status_code!= 200:
-            print("Bad Station ID. The file called "+csv_url+" does not exist.")
-            print("Please check your station ID "+str(station)+" and re-submit.")
+            print(f"Bad Station ID. The file called {csv_url} does not exist.")
+            print(f"Please check your station ID {station} and re-submit.")
             sys.exit("Break Error in load_station of StationReader: Bad Station ID.")
         
-        #Then, downloads the file and returns it. 
-        inter0 = pd.read_csv(csv_url)            
-        return inter0
- 
-    #This function finds the Day of year, assuming every month has 31 days
-    #taking in the day of month (dom) and month.
-    def find_doy(self,dom,month):
-        doy = dom+(month-1)*31
-        return doy
+        #Then, downloads the file from NOAA and returns it.          
+        return pd.read_csv(csv_url)   
+
     """
       This takes in data for single weather station - in the format of output from
-      load_station and cleans it up. 
+      self.load_station -- and cleans it up. 
       The only input is stationd, which must be in the format of self.station_data
      It returns a numpy array version, where each row contains:
          Year, Month, Day, Day of Year, TMAX, TMIN, TMID
     """
     def StationDataCleaner(self,stationd):
        
-        #Does the swap of -9999 for np.nan (I am not sure this is relevant for CSV)
+        #Does the swap of -9999 for np.nan (-9999 are no data values)
         returner = stationd.replace(-9999,np.nan) 
         
-        #Calculate TMID.
-        #Note that you cna't just load TAVG.
-        #EVen if it exists, it is often incomplete.
+        #Calculate TMID. (Note that they provide a TAVG value, but even if it exists, it is often incomplete. So we always need TMID.)
         returner['TMID'] = (returner['TMAX']+returner['TMIN'])/2
         
         #Now, drop extraneous columns.
@@ -322,15 +285,12 @@ class LoadStation :
         returner[threetemps] = (returner[threetemps]*9/5)+32
         
         #Create dates columns appropriately.
-        returner['Year']=returner['DATE'].str[:4]
-        returner['Month']=returner['DATE'].str[5:7]
-        returner['Day']=returner['DATE'].str[8:10]
+        returner['DATE']=pd.DatetimeIndex(returner['DATE'])
+        returner['Year']=returner["DATE"].dt.year
+        returner['Month']=returner["DATE"].dt.month
+        returner['Day']=returner["DATE"].dt.day
+        returner['DOY'] = returner['DATE'].dt.day_of_year
         
-        returner['Year']=pd.to_numeric(returner.Year)
-        returner['Month']=pd.to_numeric(returner.Month)
-        returner['Day']=pd.to_numeric(returner.Day)
-        #Creates a column for the DAy of the Year.
-        returner['DOY'] = self.find_doy(returner['Day'],returner['Month'])
         #Removes the DATE column, which is now redudant.
         returner = returner.drop(['DATE'],axis=1)
         
@@ -347,11 +307,11 @@ class LoadStation :
 
         #This initializes the "to keep" list -- the list of data to be included.
         tokeep = np.empty([0,1],dtype=int)
-        #Loop oer all years.
+        #Loop over all years.
         for year in uniqueyears:
             #As a default, the year is not returned. This flag therefore starts as FALSE.
             return_this_year = False    
-            #Select only the index values wehre the year is equal to year.
+            #Select only the index values where the year is equal to year.
             index=np.where(returner1[:,0]==year)
             #Then, selects data for this year
             #All columns are included.
@@ -363,15 +323,15 @@ class LoadStation :
             norows = len(uniquemonths)
             #Print an update, if the year is removed.
             if (showme) and (norows < 12) and (year != uniqueyears[-1]):
-                print("I dropped "+str(year)+" for having only "+str(norows)+" months of data.")
+                print(f"I dropped {year} for having only {norows} months of data.")
             #Checks that 12 months are actually present in the data.
             if norows == 12:
-                #This becomes True for now ,but becomes false if there are insufficeitn days
+                #This becomes True for now, but becomes false if there are insufficient days
                 #in any one month.
                 return_this_year=True
                 #Then, checks there are adequate data in each month for this year.
                 for month in uniquemonths:
-                    #Creates a list jsut including tehse months. 
+                    #Creates a list just including these months. 
                     monthssubset = yearsubset[np.where(yearsubset[:,1]==month)]
                     #Finds all numbered values.
                     listoftmax = ~np.isnan(monthssubset[:,4])
@@ -400,8 +360,7 @@ class LoadStation :
                 tokeep=np.append(tokeep,index)
         #Filter to just the years meeting all the conditions above.
         returner1 =returner1[tokeep]          
-        #Pull the very first year in the dataset.
-        self.veryfirstyear=np.unique(returner1[:,0])[0]
+
         return returner1
     
     #This function reviews the station data and checks that it is complete,.
@@ -411,48 +370,28 @@ class LoadStation :
             print("-------------------------------------")
             print("Checking the completeness of the data.")
         #List unique years in the dataset.
-        listyears = np.unique(stationd[:,0])
+        listyears = np.sort(np.unique(stationd[:,0]))
         #This is a flag field which defaults to TRue, but remains true
-        #only if the dataset pasess al checks.
+        #only if the dataset passes all checks.
         itsgood=True
         
-        """
         thisyear = date.today().year
-        #Check the latest few years are present.
-        if (listyears[-1]!=thisyear) or (listyears[-2]!=thisyear-1) or (listyears[-3]!=thisyear-2):
-            itsgood = False
-            if self.display: print("Flag: I need every year of ("+str(thisyear-3)+" to "+str(thisyear)+") - but they are not all not present.")
-        """
+        rec_years =int(self.station_filters['Min Number of Years before Present Year'] )  #Create a shortened variable name.
         #Ensure the years are sorted, because they do not work otherwise. 
-        listyears=np.sort(listyears)
-        
-        thisyear = date.today().year
-
-        #If MIN_RECENT_YEARS = 0, then the check is skipped entirely.
-        if self.station_filters['Min Number of Years before Present Year'] >0:
-            #This is the value that should be recent in this part of the array, if all years are present. 
-            threshyear=thisyear-self.station_filters['Min Number of Years before Present Year']
-            
-            #But this finds out if the threshyear is actually the right value in the array
-            #This was throwing errors I think because the number of yeras was incorrect, need to return to this line.
-            #arbiter = (listyears[-self.station_filters['Min Number of Years before Present Year']-1] - threshyear >= 0)
-            
-            #Check the latest few years are present.
-            #If not, then itsgood is false and the year is bad. 
-            #if arbiter == False:
-            #    itsgood = False
-            #    print("Flag: I need every year of ("+str(threshyear)+" to "+str(thisyear)+") - but they are not all not present.")
-
+        recent_years_in_data=pd.Series(listyears[-rec_years-1:-1]).astype(int) #List the recent years in the dataset.
+        recentyearslist=pd.Series(np.arange(thisyear-rec_years,thisyear)).astype(int) #The list of recent years that should be present. 
+        if recent_years_in_data.equals(recentyearslist) == False: 
+            itsgood = False 
+            print(f"Flag: You specified that I need {rec_years} years of data before {thisyear}, but there are only {len(recent_years_in_data)} years.")
         
         #Then, check if there are sufficient years in the recent trend.
-        #This is just the number of trend years plus 5.
-        min_trend_years = self.station_filters['Min Years for Trend']
-        no_recent = np.shape(np.where(listyears>=thisyear-min_trend_years))[1]
-        if no_recent <= self.station_filters['Min Years for Trend']:
+        min_trend_years = self.station_filters['Min Years in Last 30 Years for Trend']
+        no_recent = np.shape(np.where(listyears>=thisyear-min_trend_years))[1] #Count the number of recent years. 
+        if no_recent <= self.station_filters['Min Years in Last 30 Years for Trend']:
             itsgood = False
             if self.display: 
                 print("Flag: Insufficent years to calculate recent trend.") 
-                print("I need more than "+str(self.station_filters['Min Years for Trend'])+" years to calculate a trend, but only "+str(no_recent)+" available.")
+                print(f"You specified that {self.station_filters['Min Years in Last 30 Years for Trend']} years of data in the last 30 be present to calculate a trend, but only {no_recent} are present.")
         #Then, that there are enough years to calculate a baseline.
         #First, limit it to the years in the baseline range. 
         early_index = np.where(listyears<=self.station_filters['Last Year of Baseline'])
@@ -463,14 +402,13 @@ class LoadStation :
         if no_early <= self.station_filters['Required Number of years in Baseline Period']:
             itsgood = False
             if self.display: 
-                print("Flag: Insufficent years before "+str(self.station_filters['Last Year of Baseline'])+" to calculate mean for baseline period.")
+                print(f"Flag: Insufficent years before {self.station_filters['Last Year of Baseline']} to calculate mean for baseline period.")
                 print(f"There are {no_early} years in the period {self.station_filters['Earliest Year Required in Dataset']} to {self.station_filters['Last Year of Baseline']}, but I need {self.station_filters['Required Number of years in Baseline Period']} to set an accurate baseline.")
                 
         return itsgood
               
 
-bzdata=LoadStation([45.647256643331126,-111.04060494981753],True,15,1,1920,2020) #Loading in Bozeman, MT coordinates
-print(bzdata.station_information)
+
 
 
 
