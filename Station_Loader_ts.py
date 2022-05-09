@@ -87,13 +87,26 @@ class LoadStation :
                     keep_going=False
                     #SEtting variables to be extracted. 
                     self.name_closest_station=station['Name']
+                    self.station_information = pd.Series(data={'Weather Station Name':station['Name']})
                     self.id_closest_station=station['ID']
+                    self.station_information = self.station_information.append(pd.Series(data={'Station ID':station['ID']}))
                     #Lat Longitude.
                     self.st_latlon_str = f"{round(station['Latitude'],2)} latitude {round(station['Longitude'],2)} longitude"
+                    
                     #Latitude, Longitude of the weather station.
                     self.st_latlon=[station['Latitude'],station['Longitude']]
+                    self.station_information = self.station_information.append(pd.Series(data={'Station Latitude':station['Latitude']}))
+                    self.station_information = self.station_information.append(pd.Series(data={'Station Longitude':station['Longitude']}))
+                    
                     #Miles from reference point.
                     self.miles_from_ref = station['Miles_from_Ref']
+                    #Add in the original reference point for reference.
+                    self.station_information = self.station_information.append(
+                        pd.Series(data={
+                            "Reference Point Latitude":point[0],"Reference Point Longitude":point[1]}))
+
+                   
+                    self.station_information = self.station_information.append(pd.Series(data={'Miles from Reference Point':station['Miles_from_Ref']}))
                     if self.display:  
                         
                         print(f"Station ID# {station['ID']}, called {station['Name']} is complete. It's good to use.")
@@ -457,5 +470,7 @@ class LoadStation :
               
 
 bzdata=LoadStation([45.647256643331126,-111.04060494981753],True,15,1,1920,2020) #Loading in Bozeman, MT coordinates
-print(bzdata.station_filters)
+print(bzdata.station_information)
+
+
 
