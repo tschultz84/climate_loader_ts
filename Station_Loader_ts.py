@@ -5,7 +5,6 @@ import pandas as pd
 from math import radians, cos, sin, asin, sqrt
 import time
 import sys
-#import yaml
 import numpy as np
 from datetime import date
 import requests
@@ -24,7 +23,7 @@ It also calculates the TMID values, which is the average of TMAX and TMIN in eve
     self.station_information gives meta information, like the station name, ID, lat/lon, etc.
     self.station_filters summarizes all the filters you entered as inputs. 
     self.closest_stations gives a list of the  nearest stations
-    self.station_data is a dataframe ahving loaded all the statin's data, a numpy array 
+    self.station_data is a numpy array ahving loaded all the station's data, a numpy array 
      with these columns: [Year, Month, Day, Day of Year, TMAX, TMIN, TMID]
 
     The inputs are as follows:
@@ -47,8 +46,8 @@ It also calculates the TMID values, which is the average of TMAX and TMIN in eve
     
 """    
 class LoadStation :
-    def __init__(self,point,printudpate=False,min_days_per_mo=15,search_radius=1,firstyear=1890,basenoyears=30,
-            min_recent_years=5,required_trend_years =20,lastbaseyear=1955):
+    def __init__(self,point,printudpate=False,min_days_per_mo=15,search_radius=3,firstyear=1900,basenoyears=30,
+            min_recent_years=5,required_trend_years =25,lastbaseyear=1955):
         #Basic initializations - define your print variable and ensure the 'point' variable is in the right format. 
         self.display=  printudpate   
         #A couple of checks. 
@@ -99,6 +98,8 @@ class LoadStation :
                 #This flag stops the loop, and assigns all variables, if checks are complete.
                 if isgood == True: 
                     keep_going=False #Kill the loop. 
+                    print(f"Station ID# {station['ID']}, called {station['Name']} is complete. It's good to use.")
+                    print(f"This station is {station['Miles_from_Ref']} miles from the reference point.")
                     #Output all the station meta information as a pandas Series. 
                     self.station_information = pd.Series(data={
                         'Weather Station Name':station['Name'], #Note station Name.
@@ -115,8 +116,7 @@ class LoadStation :
                     self.st_latlon_str = f"{round(station['Latitude'],2)} latitude {round(station['Longitude'],2)} longitude" #Lat Longitude string, used in an output table.
                                                          
                     
-                    print(f"Station ID# {station['ID']}, called {station['Name']} is complete. It's good to use.")
-                    print(f"This station is {self.station_information['Miles from Reference Point']} miles from the reference point.")
+                    
                         
                 #If the check is False, keep the loop going. 
                 if isgood == False:
@@ -126,7 +126,7 @@ class LoadStation :
         if isgood==False: #If the loop is over, and no stations are found, throw an error.
             print(f"I checked { len(self.closest_stations) } weather stations within {self.station_filters['Search Radius (deg)']} degrees of {point} in all directions.")
             print("None have data which is adequate for my use.")
-            print("Please enter a different point, or change the years you must include in the load.")        
+            print("Please enter a different reference point, or change your search filters.")        
                   
     #This funtion runs all functions.
     def run_this_baby(self,point):
